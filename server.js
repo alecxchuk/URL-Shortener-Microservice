@@ -6,36 +6,25 @@ const app = express();
 const bodyParser = require('body-parser')
 const mongoose = require('mongoose');
 const uri = process.env.MONGO_URI;
-
-var crypto = require('crypto')
-
-var current_date = (new Date()).valueOf().toString();
-var random = Math.random().toString();
-var hash =crypto.createHash('sha1').update(current_date + random).digest('hex');
-
-const { nanoid } = require('nanoid')
-
-//console.log(nanoid(10));
+var validUrl = require('valid-url');
 
 
 mongoose.connect(
   uri, 
     { useNewUrlParser: true, useUnifiedTopology: true });
 
-console.log(mongoose.connection.readyState);
-// Mongoose schema
+// Mongoose schema Object
 const Schema = mongoose.Schema;
+
 // Create url schema.
 const urlSchema = new Schema ({
   original_url : {
     type: String, 
-    required: true
-    //unique: true
+    required: true,
   },
   short_url : {
-    type: String,
-    required: true
-    //unique: true
+    type: Number,
+    
   } 
 })
 // Create Url model from the schema.
@@ -61,54 +50,68 @@ app.get('/api/hello', function(req, res) {
 });
 
 // Post url
-app.post('/api/shorturl/new', (req, res, done) => {
+app.post('/api/shorturl/new',async (req, res, done) => {
+  var urlCode = Math.floor(Math.random() * 387);
+  
   // Handle the data in the request
-  const url = req.body.url;
-  // short code
-  const urlCode = nanoid(10);
-  // Check if url is valid
-  dns.lookup(url, (err, good) => {
-    // throw error if url is not valid
-    if (err) {
+  var url = req.body.url;
+  
+  // Check if the input is a valid url
+  if (validUrl.isWebUri(url)){
+    try {
+      console.log('Looks like an URI');
+      // Check if url is already in the database
+      let findOne = await Url.findOne({original_url: url});
+      // if an entry exists
+      if (findOne) {
+        res.json({
+          original_url: findOne.original_url, 
+          short_url: findOne.short_url 
+        });
+      } else {
+        // If one doesn't already exist, Create a new url, including their attributes
+        findOne = new Url ({
+          original_url: url, 
+          short_url: urlCode
+        });
+        // save the new url to the database
+        await findOne.save();
+          res.json({
+          original_url: findOne.original_url, 
+          short_url: findOne.short_url 
+        });
+
+      }
+    } catch (err) {
       console.log(err);
+      res.status(500).json('Server error...')
+    }   
+  } else { // Input is not a valid Url. Throw error.
+      console.log('Not a URI');
       res.json ({
         error: 'invalid url'
-      })
-      return 
-    }
-    // Save url 
-    // Create a new url, including their attributes
-    const siteUrl = new Url ({
-      original_url: url, short_url: urlCode})
- 
-      // Save the new url you created
-      siteUrl.save(function(err, data) {
-       if (err) return console.error(err);
-       done(null, data)
-        console.log(data)
       });
-      res.json({
-    original_url: url,
-    short_url: urlCode 
-  })
-    
-  })    
+    }
 })
 
-app.get('/api/shorturl/:short_url', (req, res) => {
-  
-  // Find the Original Url from database
-  Url.findOne({short_url:"pZGx_AL9UH"}, (err, data) => {
-    if (err) return console.log(err);
-    
-    var str = data.original_url;
-    // check if the url has a defined protocol
-    if (str.substring(0, 7) !== 'http://')
-    str = 'http://' + str;
-    
-    // redirect to original url
-    res.redirect(str)
-  })
+app.get('/api/shorturl/:short_url', async (req, res) => {
+  try{
+    // Find the Original Url from database
+    const urlParams =await Url.findOne({
+      short_url:req.params.short_url}, (err, data) => {
+      if (err) return  console.log(err) 
+    })
+    // If original url is found
+    if (urlParams) {
+      // redirect to original url
+      return res.redirect(urlParams.original_url);
+    } else { // Display an error message 
+      return res.status(404).json('Url Not Found');
+    }
+  } catch (err) {
+    console.log(err);
+    res.status(500).json('Server error');    
+  }  
 })
 
 app.listen(port, function() {
